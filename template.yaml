@@ -151,6 +151,7 @@ Resources:
                   - s3:ListBucket
                   - s3:PutObject
                   - s3:PutObjectAcl
+                Resource: !Sub arn:aws:s3:::${FrontendContent}/*
   WebsiteBuildTrigger:
     Type: Custom::StackeryWebsiteBuildTrigger
     DependsOn: WebsiteEvents
