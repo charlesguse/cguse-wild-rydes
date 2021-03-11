@@ -1,4 +1,7 @@
 {
-  "name": "request-unicorn",
-  "version": "1.0.0"
+  "name": "function",
+  "version": "1.0.0",
+  "devDependencies": {
+    "aws-sdk": "~2"
+  }
 }

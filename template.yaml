@@ -21,10 +21,14 @@ Resources:
         Image: aws/codebuild/amazonlinux2-x86_64-standard:3.0
         Type: LINUX_CONTAINER
         EnvironmentVariables:
-          - Name: BUCKET_NAME
-            Value: !Ref FrontendContent
-          - Name: BUCKET_ARN
-            Value: !GetAtt FrontendContent.Arn
+          - Name: API_URL
+            Value: !Sub https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com
+          - Name: USER_POOL_CLIENT_ID
+            Value: !Ref UserPoolClient
+          - Name: USER_POOL_ID
+            Value: !Ref UserPool
+          - Name: USER_POOL_ARN
+            Value: !GetAtt UserPool.Arn
       ServiceRole: !GetAtt WebsiteRole.Arn
       Source:
         Type: NO_SOURCE
@@ -78,6 +82,7 @@ Resources:
           - PublishDirectory: src/site/public
             BuildCommand: npm run build
             SourceDirectory: src/site
+            DestinationBucketName: !Ref FrontendContent
       Tags:
         - Key: Stackery Project Type
           Value: Website Builder
@@ -151,9 +156,9 @@ Resources:
                   - s3:ListBucket
                   - s3:PutObject
                   - s3:PutObjectAcl
-                Resource: 
-                  - !Sub arn:aws:s3:::${FrontendContent}
-                  - !Sub arn:aws:s3:::${FrontendContent}/*
+                Resource:
+                  - !Sub ${FrontendContent.Arn}/*
+                  - !Sub ${FrontendContent.Arn}
   WebsiteBuildTrigger:
     Type: Custom::StackeryWebsiteBuildTrigger
     DependsOn: WebsiteEvents
@@ -162,6 +167,91 @@ Resources:
       Type: website
       ProjectName: !Ref Website
       SourceVersion: !Ref SourceVersion
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      DefinitionBody:
+        openapi: '3.0'
+        info:
+          title: !Sub ${AWS::StackName}-HttpApi
+          version: '1.0'
+        paths:
+          /ride:
+            post:
+              responses: {}
+      FailOnWarnings: true
+      CorsConfiguration:
+        AllowOrigins:
+          - '*'
+        AllowHeaders:
+          - Authorization
+          - Content-Type
+        AllowMethods:
+          - '*'
+      Auth:
+        DefaultAuthorizer: Authorizer
+        Authorizers:
+          Authorizer:
+            IdentitySource: $request.header.Authorization
+  RequestUnicorn:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-RequestUnicorn
+      Description: !Sub
+        - Stack ${StackTagName} Environment ${EnvironmentTagName} Function ${ResourceName}
+        - ResourceName: RequestUnicorn
+      CodeUri: src/RequestUnicorn
+      Handler: index.handler
+      Runtime: nodejs14.x
+      MemorySize: 3008
+      Timeout: 30
+      Tracing: Active
+      Policies:
+        - AWSXrayWriteOnlyAccess
+        - DynamoDBCrudPolicy:
+            TableName: !Ref Rides
+        - AWSSecretsManagerGetSecretValuePolicy:
+            SecretArn: !Sub arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:/${EnvironmentTagName}/*
+      Environment:
+        Variables:
+          UNICORN_STABLE_API: unicornStableApi
+          TABLE_NAME: !Ref Rides
+          TABLE_ARN: !GetAtt Rides.Arn
+          SECRETS_NAMESPACE: !Sub /${EnvironmentTagName}/
+      Events:
+        HttpApiPOSTride:
+          Type: HttpApi
+          Properties:
+            Path: /ride
+            Method: POST
+            ApiId: !Ref HttpApi
+            PayloadFormatVersion: '2.0'
+            TimeoutInMillis: 29000
+  Rides:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: RideId
+          AttributeType: S
+      BillingMode: PAY_PER_REQUEST
+      KeySchema:
+        - AttributeName: RideId
+          KeyType: HASH
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: false
+      AliasAttributes:
+        - email
+        - preferred_username
+      UserPoolName: !Sub ${AWS::StackName}-UserPool
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref UserPool
 Parameters:
   SourceLocation:
     Type: String
@@ -169,3 +259,9 @@ Parameters:
   SourceVersion:
     Type: String
     Description: Source version for deployment (injected by Stackery at deployment time)
+  StackTagName:
+    Type: String
+    Description: Stack Name (injected by Stackery at deployment time)
+  EnvironmentTagName:
+    Type: String
+    Description: Environment Name (injected by Stackery at deployment time)
